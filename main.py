@@ -34,15 +34,10 @@ def build_model(args, backbones, feature_dims):
         raise ValueError(f"Unknown strategy: {args.strategy}")
 
 
-def run_voting(args):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    in_chnls = 3
-    num_classes = 2
-
+def get_loaders():
     df = pd.read_csv("/scratch/gssodhi/melanoma/ISIC_2020_Training_GroundTruth.csv")
 
-    _, val_df = train_test_split(
+    train_df, val_df = train_test_split(
             df,
             test_size=0.2,
             stratify=df["target"],
@@ -51,10 +46,18 @@ def run_voting(args):
     
     root_2020 = '/scratch/gssodhi/melanoma/train'
 
-    labels = np.array(train_df.target)  # shape [N], values 0/1
-
+    train_dataset = ISICDataset2020(train_df, root_2020, split='train')
     val_dataset = ISICDataset2020(val_df, root_2020, split='val')
 
+    train_loader = DataLoader(
+            dataset=train_dataset, 
+            batch_size = args.batch_size, 
+            shuffle=True, 
+            num_workers=args.num_worker, 
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=4)
+            
     val_loader = DataLoader(
             dataset=val_dataset, 
             batch_size=args.batch_size, 
@@ -64,6 +67,14 @@ def run_voting(args):
             persistent_workers=True,
             prefetch_factor=4)
 
+
+    return train_loader, val_loader, train_df
+
+def run_voting(args):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    train_loader, val_loader, train_df = get_loaders()
+    print("=> Loaders Loaded")
 
     os.makedirs(args.log_file_path, exist_ok=True)  # make sure directory exists
 
@@ -94,45 +105,11 @@ def run_voting(args):
         'effnet' : model.EfficientNet
     }
 
-
 def run_projection(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     ## ==== Data Prep =====
-    df = pd.read_csv("/scratch/gssodhi/melanoma/ISIC_2020_Training_GroundTruth.csv")
-
-    train_df, val_df = train_test_split(
-            df,
-            test_size=0.2,
-            stratify=df["target"],
-            random_state=42,
-    )
-    
-    root_2020 = '/scratch/gssodhi/melanoma/train'
-
-    labels = np.array(train_df.target)  # shape [N], values 0/1
-
-    train_dataset = ISICDataset2020(train_df, root_2020, split='train')
-    val_dataset = ISICDataset2020(val_df, root_2020, split='val')
-
-    train_loader = DataLoader(
-            dataset=train_dataset, 
-            batch_size = args.batch_size, 
-            shuffle=True, 
-            num_workers=args.num_worker, 
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=4)
-            
-    val_loader = DataLoader(
-            dataset=val_dataset, 
-            batch_size=args.batch_size, 
-            shuffle=False, 
-            num_workers=args.num_worker, 
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=4)
-
+    train_loader, val_loader, train_df = get_loaders()
     print("=> Data Prep isic2020 Done")
 
     ## ==== Model Prep =====
@@ -162,7 +139,12 @@ def run_projection(args):
     myModel = build_model(args, backbones, features)
     myModel = myModel.to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    train_counts = df_train[class_cols].sum().astype(int)
+    total = sum(train_counts)
+
+    pos_weights = torch.tensor(total / train_counts.values, dtype=torch.float32).to(device)
+
+    criterion = nn.CrossEntropyLoss(weight=pos_weights)
     optimizer = Adam(myModel.parameters(), lr=args.lr)
 
     if torch.cuda.device_count() > 1:
@@ -352,7 +334,6 @@ class model_config:
     log_file_path: str = '/home/gssodhi/melanoma/baselines/data/'
     run: str = 'run'
     freeze: bool = False
-    loss: str = 'BCE'
     strategy: str = ''
 
 
@@ -384,12 +365,12 @@ if __name__ == '__main__':
     strategy = cli_args.strategy
 
     args = model_config(
-        resume_model_path = f'/scratch/gssodhi/melanoma/checkpoint/ensemble/chkpt_{strategy}_{run}.pth.tar',
-        save_model_path = f'/scratch/gssodhi/melanoma/checkpoint/ensemble/chkpt_{strategy}_{run}',
+        resume_model_path = f'/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/ensemble/checkpoint/chkpt_{strategy}_{run}.pth.tar',
+        save_model_path = f'/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/ensemble/checkpoint/chkpt_{strategy}_{run}',
         epochs = cli_args.epochs,
         resume = cli_args.resume,
         batch_size= cli_args.batch_size,
-        log_file_path = f'/home/gssodhi/melanoma/baselines/data/ensemble/{strategy}',
+        log_file_path = f'/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/ensemble/data/{strategy}',
         run = run, 
         strategy = cli_args.strategy
     )
