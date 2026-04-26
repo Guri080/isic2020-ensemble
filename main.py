@@ -23,6 +23,9 @@ import warnings
 
 from sklearn.metrics import confusion_matrix
 
+DEVICE_IDS = [0, 1, 2]
+
+
 def build_model(args, backbones, feature_dims):
     if args.strategy == "projection":
         return model.ProjectionEnsemble(backbones, feature_dims=feature_dims)
@@ -43,30 +46,29 @@ def get_loaders():
             stratify=df["target"],
             random_state=42,
     )
-    
+
     root_2020 = '/scratch/gssodhi/melanoma/train'
 
     train_dataset = ISICDataset2020(train_df, root_2020, split='train')
     val_dataset = ISICDataset2020(val_df, root_2020, split='val')
 
     train_loader = DataLoader(
-            dataset=train_dataset, 
-            batch_size = args.batch_size, 
-            shuffle=True, 
-            num_workers=args.num_worker, 
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=4)
-            
-    val_loader = DataLoader(
-            dataset=val_dataset, 
-            batch_size=args.batch_size, 
-            shuffle=False, 
-            num_workers=args.num_worker, 
+            dataset=train_dataset,
+            batch_size = args.batch_size,
+            shuffle=True,
+            num_workers=args.num_worker,
             pin_memory=True,
             persistent_workers=True,
             prefetch_factor=4)
 
+    val_loader = DataLoader(
+            dataset=val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_worker,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=4)
 
     return train_loader, val_loader, train_df
 
@@ -99,38 +101,75 @@ def run_voting(args):
                 "train_precision",
                 "train_recall"
             ])
-    
+
     MODEL_FACTORY = {
         'resnet' : model.ResNet_50_224,
         'effnet' : model.EfficientNet
     }
 
+def train_backbones(args, train_loader, val_loader, train_df, device):
+    MODEL_FACTORY = {
+        'effnet': model.EfficientNet,
+        'resnet': model.ResNet_50_224,
+    }
+    backbone_names = ['effnet', 'effnet', 'resnet', 'resnet', 'resnet']
+    feature_dims = [1792 if name == 'effnet' else 2048 for name in backbone_names]
+
+    labels = np.array(train_df.target)
+    class_counts = np.bincount(labels)
+    class_weights = [class_counts[1] / sum(class_counts), class_counts[0] / sum(class_counts)]
+    pos_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
+    criterion = nn.CrossEntropyLoss(weight=pos_weights)
+
+    os.makedirs(args.log_file_path, exist_ok=True)
+    trained_backbones = []
+
+    for i, name in enumerate(backbone_names):
+        print(f"=> Training backbone {i+1}/{len(backbone_names)}: {name}")
+        backbone = MODEL_FACTORY[name](in_channels=3, num_classes=2, voting=True).to(device)
+        backbone = nn.DataParallel(backbone, device_ids=DEVICE_IDS)
+        optimizer = Adam(backbone.parameters(), lr=args.lr)
+
+        csv_file = os.path.join(args.log_file_path, f"backbone_{i}_{name}_{args.run}.csv")
+        with open(csv_file, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["epoch", "train_loss", "train_acc", "val_loss", "val_acc"])
+
+        for epoch in range(args.epochs):
+            train_loss, train_acc, _, _, _, _ = train_one_epoch(backbone, train_loader, criterion, optimizer, device)
+            val_loss, val_acc, _, _, _ = test(backbone, val_loader, criterion, device)
+
+            with open(csv_file, mode='a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([epoch + 1, train_loss, train_acc, val_loss, val_acc])
+
+            print(f"   Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+
+        # unwrap DataParallel before stripping the head
+        backbone = backbone.module
+
+        # strip classification head so backbone outputs feature vectors
+        if name == 'effnet':
+            backbone.classifier = nn.Identity()
+        else:
+            backbone.fc = nn.Identity()
+
+        trained_backbones.append(backbone)
+
+    return trained_backbones, feature_dims
+
+
 def run_projection(args):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = torch.device(f'cuda:{DEVICE_IDS[0]}') if torch.cuda.is_available() else torch.device('cpu')
 
     ## ==== Data Prep =====
     train_loader, val_loader, train_df = get_loaders()
     print("=> Data Prep isic2020 Done")
 
-    ## ==== Model Prep =====
-    in_channels = 3
-    num_classes = 2
+    ## ==== Train and freeze backbones =====
+    backbones, features = train_backbones(args, train_loader, val_loader, train_df, device)
+    print("=> Backbones trained")
 
-    MODEL_FACTORY = {
-        'effnet': model.EfficientNet,
-        'resnet': model.ResNet_50_224,
-    }
-
-    backbone_names = ['effnet', 'effnet', 'resnet', 'resnet', 'resnet']
-    features = []
-    backbones = []
-
-    for name in backbone_names:
-        backbones.append(MODEL_FACTORY[name](in_channels=in_channels, num_classes=num_classes, voting=False))
-        
-        features.append(1792 if name == 'effnet' else 2048)
-
-    # freeze all backbones
     for backbone in backbones:
         for p in backbone.parameters():
             p.requires_grad = False
@@ -139,19 +178,17 @@ def run_projection(args):
     myModel = build_model(args, backbones, features)
     myModel = myModel.to(device)
 
-    train_counts = df_train[class_cols].sum().astype(int)
-    total = sum(train_counts)
-
-    pos_weights = torch.tensor(total / train_counts.values, dtype=torch.float32).to(device)
+    labels = np.array(train_df.target)
+    class_counts = np.bincount(labels)
+    class_weights = [class_counts[1] / sum(class_counts), class_counts[0] / sum(class_counts)]
+    pos_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
 
     criterion = nn.CrossEntropyLoss(weight=pos_weights)
     optimizer = Adam(myModel.parameters(), lr=args.lr)
 
-    if torch.cuda.device_count() > 1:
-        print(f"=> Using {torch.cuda.device_count()} GPUs")
-        myModel = nn.DataParallel(myModel)
-    else:
-        print("=> Using 1 GPU")
+    if torch.cuda.is_available():
+        print(f"=> Using GPUs {DEVICE_IDS}")
+        myModel = nn.DataParallel(myModel, device_ids=DEVICE_IDS)
 
     os.makedirs(args.log_file_path, exist_ok=True)  # make sure directory exists
 
@@ -176,17 +213,17 @@ def run_projection(args):
                 "train_precision",
                 "train_recall"
             ])
-    
+
     ## ===== Training =====
     for epoch in range(args.epochs):
         train_loss, train_acc, train_acc_mel, train_acc_ben, train_precision, train_recall = train_one_epoch(myModel, train_loader, criterion, optimizer, device)
-        
+
         save_checkpoint({
                 'epoch': epoch,
                 'state_dict': myModel.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 }, filename=args.save_model_path)
-        
+
         test_loss, test_acc, f1, auc, val_all_probs = test(myModel, val_loader, criterion, device)
 
         with open(csv_file, mode='a', newline='') as f:
@@ -225,7 +262,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         optimizer.zero_grad()
         # forward
         out = model(x)
-        
+
         # loss
         loss = criterion(out, y)
         loss.backward()
@@ -286,8 +323,8 @@ def test(model, loader, criterion, device):
 
             all_preds.extend(preds.detach().cpu().numpy())
             all_labels.extend(y.detach().cpu().numpy())
-            
-            
+
+
             # for ROC-AUC: if 2-class, pick class 1 probabilities
             if probs.shape[1] == 2:
                 probs_for_auc = probs[:, 1]
@@ -341,26 +378,26 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
         description='RUN Baseline model of ISIC')
-    
-    parser.add_argument('--resume', 
-                        action='store_true', 
+
+    parser.add_argument('--resume',
+                        action='store_true',
                         help='resume from checkpoint')
-    parser.add_argument('--batch_size', 
+    parser.add_argument('--batch_size',
                         default=128,
                         type=int)
-    parser.add_argument('--epochs', 
+    parser.add_argument('--epochs',
                         default=100,
                         type=int)
     parser.add_argument('--strategy',
                         default=None,
                         help='Options: "hard_vote" | "soft_vote" | "projection". Exclude flag to pass in no strategy',
                         type=str)
-    parser.add_argument('--run', 
+    parser.add_argument('--run',
                         type=str)
 
     cli_args = parser.parse_args()
 
- 
+
     run = cli_args.run
     strategy = cli_args.strategy
 
@@ -371,10 +408,10 @@ if __name__ == '__main__':
         resume = cli_args.resume,
         batch_size= cli_args.batch_size,
         log_file_path = f'/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/ensemble/data/{strategy}',
-        run = run, 
+        run = run,
         strategy = cli_args.strategy
     )
-    
+
     if cli_args.strategy in ['hard_vote', 'soft_vote']:
         run_voting(args)
     elif cli_args.strategy == 'projection':

@@ -21,11 +21,13 @@ class ProjectionEnsemble(EnsembleModels):
 
         total_dims = sum(feature_dims)
 
-        self.head = nn.Sequential(
-            nn.Linear(total_dims, hidden_dims),
-            nn.ReLU(),
-            nn.Linear(hidden_dims, 2)
-        )
+        # self.head = nn.Sequential(
+        #     nn.Linear(total_dims, hidden_dims),
+
+        #     nn.Linear(hidden_dims, 2)
+        # )
+
+        self.head = nn.Linear(total_dims, 2)
 
     def forward(self, x):
         features = self.extract_features(x)
