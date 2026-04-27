@@ -143,7 +143,7 @@ def train_backbones(args, train_loader, val_loader, train_df, device):
                 writer = csv.writer(f)
                 writer.writerow([epoch + 1, train_loss, train_acc, val_loss, val_acc])
 
-            print(f"   Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+            print(f"Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
 
         # unwrap DataParallel before stripping the head
         backbone = backbone.module
@@ -390,7 +390,7 @@ if __name__ == '__main__':
                         type=int)
     parser.add_argument('--strategy',
                         default=None,
-                        help='Options: "hard_vote" | "soft_vote" | "projection". Exclude flag to pass in no strategy',
+                        help='Options: "hard_vote" | "soft_vote" | "projection".',
                         type=str)
     parser.add_argument('--run',
                         type=str)
