@@ -38,7 +38,7 @@ def build_model(args, backbones, feature_dims):
 
 
 def get_loaders():
-    df = pd.read_csv("/scratch/gssodhi/melanoma/ISIC_2020_Training_GroundTruth.csv")
+    df = pd.read_csv("/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/datasets/isic2020/ISIC_2020_Training_GroundTruth.csv")
 
     train_df, val_df = train_test_split(
             df,
@@ -47,7 +47,7 @@ def get_loaders():
             random_state=42,
     )
 
-    root_2020 = '/scratch/gssodhi/melanoma/train'
+    root_2020 = '/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/datasets/isic2020/train'
 
     train_dataset = ISICDataset2020(train_df, root_2020, split='train')
     val_dataset = ISICDataset2020(val_df, root_2020, split='val')
@@ -59,7 +59,8 @@ def get_loaders():
             num_workers=args.num_worker,
             pin_memory=True,
             persistent_workers=True,
-            prefetch_factor=4)
+            prefetch_factor=4,
+            drop_last=True)
 
     val_loader = DataLoader(
             dataset=val_dataset,
