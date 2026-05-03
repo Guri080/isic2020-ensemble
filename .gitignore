@@ -1,5 +1,11 @@
+# cache files
 __pycache__/
+.ipynb_checkpoints/
 
+# training data
 checkpoint/
 data/
-.ipynb_checkpoints/
+dataset/
+
+# environments/dependencies
+.venv/

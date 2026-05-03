@@ -17,6 +17,7 @@ from torchvision.transforms.v2._utils import (
     _get_fill,
     _setup_fill_arg,
     _FillType,
+    query_size,
 )
 
 
@@ -69,9 +70,9 @@ class PadSquare(v2.Transform):
         self.padding_mode = padding_mode
         self.fill = _setup_fill_arg(fill)
 
-    def make_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+    def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
         # Get the original height and width from the inputs
-        orig_height, orig_width = v2.query_size(flat_inputs)
+        orig_height, orig_width = query_size(flat_inputs)
 
         # Find the target size (maximum of height and width)
         target_size = max(orig_height, orig_width)
@@ -94,7 +95,7 @@ class PadSquare(v2.Transform):
         # The padding needs to be in the format [left, top, right, bottom]
         return dict(padding=[pad_left, pad_top, pad_right, pad_bottom])
 
-    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         fill = _get_fill(self.fill, type(inpt))
         return self._call_kernel(
             F.pad,

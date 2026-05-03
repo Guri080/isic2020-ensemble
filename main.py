@@ -23,7 +23,7 @@ import warnings
 
 from sklearn.metrics import confusion_matrix
 
-DEVICE_IDS = [0, 1, 2]
+DEVICE_IDS = [0]
 
 
 def build_model(args, backbones, feature_dims):
@@ -38,7 +38,7 @@ def build_model(args, backbones, feature_dims):
 
 
 def get_loaders():
-    df = pd.read_csv("/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/datasets/isic2020/ISIC_2020_Training_GroundTruth.csv")
+    df = pd.read_csv("/home/gssodhi/isic2020-ensemble/dataset/ISIC_2020_Training_GroundTruth.csv")
 
     train_df, val_df = train_test_split(
             df,
@@ -47,7 +47,7 @@ def get_loaders():
             random_state=42,
     )
 
-    root_2020 = '/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/datasets/isic2020/train'
+    root_2020 = '/home/gssodhi/isic2020-ensemble/dataset/train'
 
     train_dataset = ISICDataset2020(train_df, root_2020, split='train')
     val_dataset = ISICDataset2020(val_df, root_2020, split='val')
@@ -187,7 +187,7 @@ def run_projection(args):
     criterion = nn.CrossEntropyLoss(weight=pos_weights)
     optimizer = Adam(myModel.parameters(), lr=args.lr)
 
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and len(DEVICE_IDS) > 1:
         print(f"=> Using GPUs {DEVICE_IDS}")
         myModel = nn.DataParallel(myModel, device_ids=DEVICE_IDS)
 
