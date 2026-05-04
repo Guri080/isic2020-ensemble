@@ -135,8 +135,14 @@ def train_backbones(args, train_loader, val_loader, train_df, device):
         with open(csv_file, mode='w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(["epoch", "train_loss", "train_acc", "val_loss", "val_acc"])
-
-        for epoch in range(args.epochs):
+        print(f"LOGGING IN {csv_file}")
+        if name == 'effnet':
+            EPOCHS = 12
+        else:
+            EPOCHS = 20
+        
+        print(f"=> TRAINING {name} FOR {EPOCHS} EPOCHS AND {args.lr} LR")
+        for epoch in range(EPOCHS):
             train_loss, train_acc, _, _, _, _ = train_one_epoch(backbone, train_loader, criterion, optimizer, device)
             val_loss, val_acc, _, _, _ = test(backbone, val_loader, criterion, device)
 
@@ -364,7 +370,7 @@ def save_checkpoint(state, filename='model'):
 class model_config:
     batch_size: int = 128
     num_worker:int = 8
-    lr: float = 1e-4
+    lr: float = 1e-5
     epochs: int = 30
     resume: bool = False
     resume_model_path: str = '/scratch/gssodhi/melanoma/checkpoint/chkpt_efNet'
@@ -403,12 +409,12 @@ if __name__ == '__main__':
     strategy = cli_args.strategy
 
     args = model_config(
-        resume_model_path = f'/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/ensemble/checkpoint/chkpt_{strategy}_{run}.pth.tar',
-        save_model_path = f'/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/ensemble/checkpoint/chkpt_{strategy}_{run}',
+        resume_model_path = f'/home/gssodhi/isic2020-ensemble/checkpoint/chkpt_{strategy}_{run}.pth.tar',
+        save_model_path = f'/home/gssodhi/isic2020-ensemble/checkpoint/chkpt_{strategy}_{run}',
         epochs = cli_args.epochs,
         resume = cli_args.resume,
         batch_size= cli_args.batch_size,
-        log_file_path = f'/home/gssodhi/snap/firmware-updater/224/Desktop/melanoma_detection/ensemble/data/{strategy}',
+        log_file_path = f'/home/gssodhi/isic2020-ensemble/data/{strategy}',
         run = run,
         strategy = cli_args.strategy
     )
